@@ -11,6 +11,8 @@ A dsh plugin that adds an "About" panel to the settings page, with version displ
 - **一键更新**：检测到新版本时可直接安装 / Install updates directly when a new version is available
 - **立即重启**：更新后一键重启后端（无命令窗口，自动拉起并重连）/ Restart the backend with one click after updating (no console window; auto-relaunch and reconnect)
 
+<img width="960" height="344" alt="image" src="https://github.com/user-attachments/assets/fb15bf57-7b4f-4699-a6f8-d921a0ff206f" />
+
 ## 许可 / License
 
 MIT
