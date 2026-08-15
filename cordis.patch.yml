@@ -1,0 +1,5 @@
+# dsh-about-updater bundle patch: inserts the plugin row.
+- insert:
+    - id: about-updater
+      name: dsh-about-updater
+      config: {}
