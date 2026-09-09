@@ -10,11 +10,6 @@ window.__ModuleLoader__.load({
 		const NS = "about-updater";
 		const DEFAULT_PORT = 31201;
 
-		const dangerBtn = {
-			color: "var(--dsw-alias-danger-fg, #e5484d)",
-			borderColor: "rgba(229, 77, 77, 0.35)"
-		};
-
 		const styles = {
 			root: { display: "flex", flexDirection: "column", gap: "12px", width: "100%" },
 			title: { fontSize: "16px", fontWeight: 500, color: "var(--dsw-alias-label-primary)", margin: 0 },
@@ -26,8 +21,16 @@ window.__ModuleLoader__.load({
 			statusOk: { fontSize: "13px", color: "var(--dsw-alias-success-fg, #30a46c)" },
 			statusNew: { fontSize: "13px", color: "var(--dsw-alias-label-primary)" },
 			statusErr: { fontSize: "13px", color: "var(--dsw-alias-danger-fg, #e5484d)" },
-			output: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)", whiteSpace: "pre-wrap", maxHeight: 160, overflow: "auto", margin: 0, lineHeight: "18px" }
+			changeTitle: { fontSize: "13px", fontWeight: 600, color: "var(--dsw-alias-label-primary)", margin: "0 0 6px 0" },
+			changeBox: { fontSize: "12px", color: "var(--dsw-alias-label-secondary)", whiteSpace: "pre-wrap", maxHeight: "240px", overflow: "auto", margin: 0, lineHeight: "19px", padding: "10px 12px", borderRadius: "10px", background: "var(--dsw-alias-bg-layer-2)", border: "1px solid var(--dsw-alias-border-subtle, transparent)" }
 		};
+
+		function plainMarkdown(text) {
+			return String(text || "")
+				.replace(/<[^>]+>/g, "")
+				.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+				.trim();
+		}
 
 		async function resolvePort(connection) {
 			try {
@@ -44,105 +47,101 @@ window.__ModuleLoader__.load({
 			const [port, setPort] = _react.useState(DEFAULT_PORT);
 			const [current, setCurrent] = _react.useState("");
 			const [latest, setLatest] = _react.useState(null);
-			const [checking, setChecking] = _react.useState(false);
-			const [checked, setChecked] = _react.useState(false);
+			const [phase, setPhase] = _react.useState("idle"); // idle | checking | downloading | installing
 			const [hasUpdate, setHasUpdate] = _react.useState(false);
+			const [changelog, setChangelog] = _react.useState("");
 			const [error, setError] = _react.useState("");
-			const [updating, setUpdating] = _react.useState(false);
-			const [updated, setUpdated] = _react.useState(false);
-			const [updateOutput, setUpdateOutput] = _react.useState("");
-			const [restarting, setRestarting] = _react.useState(false);
 
 			_react.useEffect(() => {
 				let alive = true;
 				resolvePort(connection).then((p) => {
 					if (!alive) return;
 					setPort(p);
-					doCheck(p);
+					doCheck(p, false);
 				});
 				return () => { alive = false; };
 			}, [connection]);
 
 			const base = () => `http://127.0.0.1:${port}`;
 
-			const doCheck = (p) => {
-				const target = p ?? port;
-				setChecking(true);
+			const pollRelaunch = () => {
+				let tries = 0;
+				const poll = setInterval(() => {
+					tries += 1;
+					fetch(`${base()}/check`)
+						.then(() => {
+							clearInterval(poll);
+							location.reload();
+						})
+						.catch(() => {
+							if (tries > 90) {
+								clearInterval(poll);
+								setPhase("idle");
+								setError("安装超时，请手动重启 dsh 并刷新页面");
+							}
+						});
+				}, 2000);
+			};
+
+			const doInstall = () => {
+				setPhase("installing");
 				setError("");
-				setChecked(false);
-				setUpdateOutput("");
+				fetch(`${base()}/install`, { method: "POST" }).catch(() => {});
+				pollRelaunch();
+			};
+
+			const startDownload = () => {
+				setPhase("downloading");
+				setError("");
+				fetch(`${base()}/update`, { method: "POST" })
+					.then((r) => r.json())
+					.then((data) => {
+						if (data.ok) doInstall();
+						else { setPhase("idle"); setError(data.output || data.error || "下载失败"); }
+					})
+					.catch((e) => { setPhase("idle"); setError(String(e.message || e)); });
+			};
+
+			const doCheck = (p, auto) => {
+				const target = p ?? port;
+				setPhase("checking");
+				setError("");
 				fetch(`http://127.0.0.1:${target}/check`)
 					.then((r) => r.json())
 					.then((data) => {
 						setCurrent(data.current || "");
 						setLatest(data.latest);
 						setHasUpdate(Boolean(data.hasUpdate));
-						if (data.error) setError(data.error);
-						setChecked(true);
+						if (data.error) {
+							setError(data.error);
+							setPhase("idle");
+							return;
+						}
+						setChangelog(data.hasUpdate ? plainMarkdown(data.changelog) : "");
+						if (data.hasUpdate && auto) {
+							startDownload();
+							return;
+						}
+						setPhase("idle");
 					})
-					.catch((e) => { setError(String(e.message || e)); setChecked(true); })
-					.finally(() => setChecking(false));
+					.catch((e) => {
+						setError(String(e.message || e));
+						setPhase("idle");
+					});
 			};
 
-			const doUpdate = () => {
-				setUpdating(true);
-				setError("");
-				fetch(`${base()}/update`, { method: "POST" })
-					.then((r) => r.json())
-					.then((data) => {
-						if (data.ok) { setUpdated(true); setUpdateOutput(data.output || ""); }
-						else { setError(data.output || data.error || "更新失败"); }
-					})
-					.catch((e) => setError(String(e.message || e)))
-					.finally(() => setUpdating(false));
-			};
-
-			const doRestart = () => {
-				setRestarting(true);
-				setError("");
-				fetch(`${base()}/restart`, { method: "POST" }).catch(() => {});
-				let tries = 0;
-				const poll = setInterval(() => {
-					tries += 1;
-					fetch(`${base()}/check`, { method: "GET" })
-						.then(() => {
-							clearInterval(poll);
-							location.reload();
-						})
-						.catch(() => {
-							if (tries > 60) {
-								clearInterval(poll);
-								setRestarting(false);
-								setError("重启超时，请手动刷新页面");
-							}
-						});
-				}, 1500);
-			};
-
-			const button = (label, onClick, opts) =>
-				_react.createElement(_primitives.Button, Object.assign({
-					variant: opts?.variant || "ghost",
-					size: "md",
-					onClick,
-					style: opts?.style
-				}, opts?.disabled ? { disabled: true } : {}), label);
-
-			const checkBtn = () =>
-				button(checking ? "检查更新…" : "检查更新", () => doCheck(), { variant: "ghost", disabled: checking, style: { whiteSpace: "nowrap" } });
+			const buttonLabel = phase === "checking" ? "检查更新…"
+				: phase === "downloading" ? "正在下载…"
+				: phase === "installing" ? "正在安装并重启…"
+				: "检查更新";
 
 			const statusEl = () => {
-				if (checking) return _react.createElement("span", { style: styles.status }, "正在检查…");
 				if (error) return _react.createElement("span", { style: styles.statusErr }, error);
+				if (phase === "checking") return _react.createElement("span", { style: styles.status }, "正在检查更新…");
+				if (phase === "downloading") return _react.createElement("span", { style: styles.statusNew }, `正在下载 v${latest}…`);
+				if (phase === "installing") return _react.createElement("span", { style: styles.statusNew }, "正在安装并重启 dsh，约需 2 分钟，请勿关闭窗口");
 				if (hasUpdate && latest) return _react.createElement("span", { style: styles.statusNew }, `发现新版本 v${latest}`);
 				return _react.createElement("span", { style: styles.statusOk }, "已是最新版本");
-			};
-
-			const actionEl = () => {
-				if (checking) return null;
-				if (hasUpdate && latest) {
-					return button(updating ? "安装中…" : "更新", doUpdate, { variant: "primary", disabled: updating });
-				}
-				return button(restarting ? "正在重启…" : "立即重启", doRestart, { variant: "outline", style: dangerBtn, disabled: restarting });
 			};
 
 			return _react.createElement("div", { style: styles.root },
@@ -155,14 +154,18 @@ window.__ModuleLoader__.load({
 					statusEl()
 				),
 				_react.createElement("div", { style: styles.item },
-					checkBtn(),
-					actionEl()
+					_react.createElement(_primitives.Button, {
+						variant: "ghost",
+						size: "md",
+						onClick: () => doCheck(null, true),
+						disabled: phase !== "idle",
+						style: { whiteSpace: "nowrap" }
+					}, buttonLabel)
 				),
-				updated ? _react.createElement("div", { style: styles.item },
-					_react.createElement("span", { style: styles.itemLabel }, "更新完成"),
-					button("立即重启", doRestart, { variant: "outline", style: dangerBtn, disabled: restarting })
-				) : null,
-				updateOutput ? _react.createElement("pre", { style: styles.output }, updateOutput) : null
+				hasUpdate && changelog ? _react.createElement("div", null,
+					_react.createElement("p", { style: styles.changeTitle }, `更新日志 v${latest}`),
+					_react.createElement("pre", { style: styles.changeBox }, changelog)
+				) : null
 			);
 		}
 
